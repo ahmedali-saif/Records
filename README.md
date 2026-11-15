@@ -1,1 +1,356 @@
-# Records
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>رسم قطعة أرض</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:Tajawal,system-ui,sans-serif;color:#1d2a24}
+  #map{position:fixed;inset:0}
+  #panel{position:fixed;z-index:1000;top:12px;right:12px;width:350px;max-height:calc(100% - 24px);overflow:auto;
+    background:#fff;border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.25);padding:12px 14px}
+  @media(max-width:640px){#panel{top:auto;bottom:0;right:0;left:0;width:auto;max-height:58%;border-radius:16px 16px 0 0}}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .head h2{margin:0;font-size:17px;color:#1b7a4b}
+  #panel.min .body{display:none}
+  .hint{font-size:13px;color:#5b6b63;margin:8px 0}
+  input[type=text],textarea{width:100%;font:inherit;font-size:14px;padding:8px 10px;border:1px solid #cfd8d3;border-radius:10px;outline:none}
+  input[type=text]:focus,textarea:focus{border-color:#1b7a4b}
+  textarea{direction:ltr;text-align:left;min-height:84px;font-size:13px}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0}
+  .stat{background:#eef6f1;border-radius:10px;padding:7px 4px;text-align:center}
+  .stat b{display:block;font-size:15px;direction:ltr}
+  .stat span{font-size:11px;color:#5b6b63}
+  .row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .btn{flex:1 1 auto;font:inherit;font-size:13px;font-weight:500;border:1px solid #cfd8d3;background:#fff;color:#1d2a24;
+    border-radius:10px;padding:8px 10px;cursor:pointer;text-decoration:none;text-align:center;white-space:nowrap}
+  .btn:hover{background:#f3f7f5}
+  .btn.primary{background:#1b7a4b;border-color:#1b7a4b;color:#fff;font-weight:700}
+  .btn.primary:hover{background:#166640}
+  .btn.wa{background:#25d366;border-color:#25d366;color:#fff}
+  .btn.icon{flex:0 0 auto;padding:4px 10px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  ol#plist{margin:6px 0;padding:0 18px 0 0;font-size:12.5px}
+  ol#plist li{display:flex;justify-content:space-between;align-items:center;padding:2px 0}
+  ol#plist li code{direction:ltr;font-size:12px;color:#33433b}
+  ol#plist li button{border:none;background:none;color:#c62828;cursor:pointer;font-size:14px}
+  details{margin:8px 0;font-size:13px}
+  summary{cursor:pointer;color:#1b7a4b;font-weight:500}
+  #out{display:none;background:#f6faf8;border:1px dashed #1b7a4b;border-radius:10px;padding:8px;margin-top:8px}
+  #out input{direction:ltr;text-align:left;font-size:12px}
+  .vtx{background:#e53935;color:#fff;border:2px solid #fff;border-radius:50%;width:26px;height:26px;display:flex;
+    align-items:center;justify-content:center;font-weight:700;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  .elen span{position:absolute;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);color:#fff;font-size:11px;
+    padding:1px 6px;border-radius:6px;white-space:nowrap;direction:ltr}
+  .title-v{font-size:18px;font-weight:700;margin:6px 0 2px}
+  #toast{position:fixed;z-index:2000;left:50%;top:16px;transform:translateX(-50%);background:#1d2a24;color:#fff;
+    padding:8px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
+  #toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <div class="head">
+    <h2 id="ptitle">رسم قطعة أرض</h2>
+    <button class="btn icon" id="toggle" title="تصغير/تكبير">▾</button>
+  </div>
+
+  <div class="body">
+    <!-- وضع الرسم -->
+    <div id="editBox">
+      <p class="hint">اضغط على الخريطة لإضافة <b>3 أو 4</b> نقاط (أركان القطعة). يمكنك سحب أي نقطة لتعديل موقعها.</p>
+      <input type="text" id="name" placeholder="اسم القطعة / المالك (اختياري)">
+      <div class="stats">
+        <div class="stat"><b id="sCount">0/4</b><span>النقاط</span></div>
+        <div class="stat"><b id="sArea">—</b><span>المساحة م²</span></div>
+        <div class="stat"><b id="sPer">—</b><span>المحيط م</span></div>
+      </div>
+      <ol id="plist"></ol>
+      <div class="row">
+        <button class="btn" id="undo">↶ تراجع</button>
+        <button class="btn" id="clear">🗑 مسح</button>
+        <button class="btn" id="locate">📍 موقعي</button>
+        <button class="btn" id="addMe">➕ نقطة من موقعي</button>
+      </div>
+      <details>
+        <summary>إدخال الإحداثيات يدوياً</summary>
+        <p class="hint">سطر لكل نقطة بصيغة: <code dir="ltr">24.3456, 56.7123</code></p>
+        <textarea id="manual" placeholder="24.345600, 56.712300&#10;24.346100, 56.713000&#10;24.345200, 56.713400"></textarea>
+        <div class="row"><button class="btn" id="drawManual">رسم من الإحداثيات</button></div>
+      </details>
+      <div class="row"><button class="btn primary" id="gen" disabled>🔗 إنشاء رابط القطعة</button></div>
+    </div>
+
+    <!-- وضع العرض -->
+    <div id="viewBox" style="display:none">
+      <div class="title-v" id="vName"></div>
+      <div class="stats">
+        <div class="stat"><b id="vCount">—</b><span>الأركان</span></div>
+        <div class="stat"><b id="vArea">—</b><span>المساحة م²</span></div>
+        <div class="stat"><b id="vPer">—</b><span>المحيط م</span></div>
+      </div>
+      <div class="hint" id="vHa"></div>
+      <div class="row">
+        <a class="btn primary" id="vDir" target="_blank" rel="noopener">🧭 الاتجاهات للقطعة</a>
+        <a class="btn" id="vGm" target="_blank" rel="noopener">فتح في خرائط جوجل</a>
+      </div>
+      <div class="row">
+        <button class="btn" id="vCopy">نسخ الرابط</button>
+        <button class="btn" id="vEdit">✏️ تعديل</button>
+        <button class="btn" id="vNew">رسم جديد</button>
+      </div>
+    </div>
+
+    <!-- مخرجات الرابط -->
+    <div id="out">
+      <input type="text" id="link" readonly>
+      <div class="row">
+        <button class="btn" id="copy">نسخ</button>
+        <a class="btn wa" id="wa" target="_blank" rel="noopener">واتساب</a>
+        <a class="btn" id="open" target="_blank" rel="noopener">فتح</a>
+      </div>
+      <div class="hint" style="margin:4px 0 0">
+        رابط بديل لا يحتاج استضافة: <a id="gj" target="_blank" rel="noopener">عرض على geojson.io</a>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+/* ===== الإعدادات ===== */
+const MAX_PTS = 4, MIN_PTS = 3, R = 6378137;
+const DEFAULT_CENTER = [24.35, 56.72], DEFAULT_ZOOM = 10;   // شمال الباطنة
+let BASE = location.origin + location.pathname;             // يُستبدل تلقائياً في Apps Script
+
+/* ===== الحالة ===== */
+let pts = [], layers = [], poly = null, mode = 'edit', meMarker = null;
+const $ = id => document.getElementById(id);
+
+/* ===== الخريطة (طبقات جوجل) ===== */
+const map = L.map('map', { zoomControl: true }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+const gHybrid = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { subdomains: '0123', maxZoom: 21, attribution: '© Google' }).addTo(map);
+const gRoad   = L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains: '0123', maxZoom: 21, attribution: '© Google' });
+L.control.layers({ 'قمر صناعي': gHybrid, 'خريطة الطرق': gRoad }, null, { position: 'topleft' }).addTo(map);
+
+map.on('click', e => { if (mode === 'edit') addPoint([e.latlng.lat, e.latlng.lng]); });
+
+/* ===== حسابات ===== */
+const rad = d => d * Math.PI / 180;
+function area(p) {
+  if (p.length < 3) return 0;
+  let s = 0;
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length];
+    s += rad(b[1] - a[1]) * (2 + Math.sin(rad(a[0])) + Math.sin(rad(b[0])));
+  }
+  return Math.abs(s * R * R / 2);
+}
+function dist(a, b) {
+  const dLat = rad(b[0] - a[0]), dLng = rad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function perimeter(p) {
+  if (p.length < 2) return 0;
+  let s = 0;
+  for (let i = 0; i < p.length; i++) { if (p.length === 2 && i === 1) break; s += dist(p[i], p[(i + 1) % p.length]); }
+  return s;
+}
+function centroid(p) { return [p.reduce((s, x) => s + x[0], 0) / p.length, p.reduce((s, x) => s + x[1], 0) / p.length]; }
+// ترتيب النقاط حول المركز لتجنّب تقاطع أضلاع المضلع الرباعي
+function reorder() {
+  if (pts.length < 4) return;
+  const c = centroid(pts);
+  pts.sort((a, b) => Math.atan2(a[0] - c[0], a[1] - c[1]) - Math.atan2(b[0] - c[0], b[1] - c[1]));
+}
+const fmt = (n, d = 1) => n.toLocaleString('en-US', { maximumFractionDigits: d });
+
+/* ===== الرسم ===== */
+function render() {
+  layers.forEach(l => map.removeLayer(l)); layers = [];
+  if (poly) { map.removeLayer(poly); poly = null; }
+
+  if (pts.length >= 2) {
+    poly = (pts.length >= 3 ? L.polygon : L.polyline)(pts, { color: '#ffeb3b', weight: 3, fillColor: '#ffeb3b', fillOpacity: .25 }).addTo(map);
+    // أطوال الأضلاع
+    const n = pts.length >= 3 ? pts.length : 1;
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const m = L.marker([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], {
+        interactive: false,
+        icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: '<span>' + fmt(dist(a, b)) + ' م</span>' })
+      }).addTo(map);
+      layers.push(m);
+    }
+  }
+  pts.forEach((p, i) => {
+    const mk = L.marker(p, {
+      draggable: mode === 'edit',
+      icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="vtx">' + (i + 1) + '</div>' })
+    }).addTo(map);
+    mk.on('drag', e => { pts[i] = [e.latlng.lat, e.latlng.lng]; if (poly) poly.setLatLngs(pts); updateStats(); });
+    mk.on('dragend', () => { reorder(); render(); });
+    layers.push(mk);
+  });
+  updateStats();
+}
+
+function updateStats() {
+  const a = area(pts), p = perimeter(pts);
+  $('sCount').textContent = pts.length + '/' + MAX_PTS;
+  $('sArea').textContent = pts.length >= 3 ? fmt(a) : '—';
+  $('sPer').textContent = pts.length >= 2 ? fmt(p) : '—';
+  $('plist').innerHTML = pts.map((x, i) =>
+    `<li><code>${x[0].toFixed(6)}, ${x[1].toFixed(6)}</code>${mode === 'edit' ? `<button data-i="${i}" title="حذف">✕</button>` : ''}</li>`).join('');
+  $('gen').disabled = pts.length < MIN_PTS;
+  $('undo').disabled = !pts.length;
+  $('out').style.display = 'none';
+}
+
+$('plist').addEventListener('click', e => {
+  const i = e.target.dataset.i;
+  if (i !== undefined) { pts.splice(+i, 1); render(); }
+});
+
+function addPoint(p) {
+  if (pts.length >= MAX_PTS) { toast('الحد الأقصى 4 نقاط — اسحب النقاط لتعديلها'); return; }
+  pts.push(p); reorder(); render();
+}
+
+/* ===== الروابط ===== */
+function encodePts() { return pts.map(p => p[0].toFixed(6) + ',' + p[1].toFixed(6)).join('|'); }
+function shareLink() {
+  const name = $('name').value.trim();
+  const sep = BASE.includes('?') ? '&' : '?';
+  return BASE + sep + 'p=' + encodeURIComponent(encodePts()) + (name ? '&n=' + encodeURIComponent(name) : '');
+}
+function geojsonLink() {
+  const ring = pts.map(p => [+p[1].toFixed(6), +p[0].toFixed(6)]); ring.push(ring[0]);
+  const fc = { type: 'FeatureCollection', features: [{ type: 'Feature',
+    properties: { name: $('name').value.trim() || 'قطعة أرض', 'area_m2': Math.round(area(pts)), fill: '#ffeb3b', stroke: '#ffeb3b' },
+    geometry: { type: 'Polygon', coordinates: [ring] } }] };
+  return 'https://geojson.io/#data=data:application/json,' + encodeURIComponent(JSON.stringify(fc));
+}
+function gmapsLinks() {
+  const c = centroid(pts), q = c[0].toFixed(6) + ',' + c[1].toFixed(6);
+  return { search: 'https://www.google.com/maps/search/?api=1&query=' + q, dir: 'https://www.google.com/maps/dir/?api=1&destination=' + q };
+}
+
+$('gen').onclick = () => {
+  const link = shareLink(), name = $('name').value.trim();
+  $('link').value = link;
+  $('open').href = link;
+  $('wa').href = 'https://wa.me/?text=' + encodeURIComponent((name ? name + '\n' : 'موقع قطعة الأرض:\n') + link);
+  $('gj').href = geojsonLink();
+  $('out').style.display = 'block';
+  if (!/^https?:/.test(BASE)) toast('تنبيه: الصفحة مفتوحة من ملف محلي، ارفعها على استضافة ليعمل الرابط عند الآخرين');
+};
+
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast('تم نسخ الرابط ✓'); }
+  catch (e) {
+    const i = $('link'); i.value = t; $('out').style.display = 'block'; i.select();
+    try { document.execCommand('copy'); toast('تم نسخ الرابط ✓'); } catch (_) { toast('انسخ الرابط يدوياً'); }
+  }
+}
+$('copy').onclick = () => copyText($('link').value);
+
+/* ===== أزرار التحكم ===== */
+$('undo').onclick = () => { pts.pop(); render(); };
+$('clear').onclick = () => { pts = []; render(); };
+$('toggle').onclick = () => { const p = $('panel'); p.classList.toggle('min'); $('toggle').textContent = p.classList.contains('min') ? '▴' : '▾'; };
+
+function getPos(cb) {
+  if (!window.isSecureContext) { toast('تحديد الموقع يعمل فقط عند فتح الصفحة من رابط https وليس من ملف على الجهاز'); return; }
+  if (!navigator.geolocation) { toast('المتصفح لا يدعم تحديد الموقع'); return; }
+  toast('جارٍ تحديد موقعك...');
+  navigator.geolocation.getCurrentPosition(
+    pos => cb([pos.coords.latitude, pos.coords.longitude], pos.coords.accuracy),
+    err => toast(err.code === 1 ? 'تم رفض إذن الموقع — اسمح للمتصفح من إعدادات الموقع' :
+                 err.code === 3 ? 'انتهت المهلة — حاول مرة أخرى في مكان مكشوف' :
+                 'تعذّر تحديد الموقع — تأكد من تفعيل GPS'),
+    { enableHighAccuracy: true, timeout: 15000 });
+}
+function showMe(p, acc) {
+  if (meMarker) map.removeLayer(meMarker);
+  meMarker = L.circle(p, { radius: Math.max(acc, 3), color: '#1e88e5', weight: 2, fillOpacity: .2 }).addTo(map);
+}
+$('locate').onclick = () => getPos((p, acc) => { showMe(p, acc); map.setView(p, 18); toast('دقة الموقع ±' + Math.round(acc) + ' م'); });
+$('addMe').onclick = () => getPos((p, acc) => { showMe(p, acc); addPoint(p); map.setView(p, Math.max(map.getZoom(), 18)); toast('أُضيفت النقطة (دقة ±' + Math.round(acc) + ' م)'); });
+
+function parseList(text) {
+  const out = [];
+  text.split(/[\n|;]+/).forEach(line => {
+    const n = (line.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+    if (n.length >= 2) {
+      let [a, b] = n;
+      if (Math.abs(a) > 90 && Math.abs(b) <= 90) [a, b] = [b, a];   // تصحيح إن أُدخل خط الطول أولاً
+      if (Math.abs(a) <= 90 && Math.abs(b) <= 180) out.push([a, b]);
+    }
+  });
+  return out;
+}
+$('drawManual').onclick = () => {
+  const p = parseList($('manual').value);
+  if (p.length < MIN_PTS || p.length > MAX_PTS) { toast('أدخل 3 أو 4 نقاط صحيحة'); return; }
+  pts = p; reorder(); render(); fit();
+};
+
+function fit() { if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 19 }); }
+
+/* ===== وضع العرض / الرسم ===== */
+function setMode(m) {
+  mode = m;
+  $('editBox').style.display = m === 'edit' ? '' : 'none';
+  $('viewBox').style.display = m === 'view' ? '' : 'none';
+  $('ptitle').textContent = m === 'view' ? 'عرض قطعة أرض' : 'رسم قطعة أرض';
+  map.getContainer().style.cursor = m === 'edit' ? 'crosshair' : '';
+  render();
+  if (m === 'view') fillView();
+}
+function fillView() {
+  const a = area(pts), g = gmapsLinks();
+  $('vName').textContent = $('name').value.trim() || 'قطعة أرض';
+  $('vCount').textContent = pts.length;
+  $('vArea').textContent = fmt(a);
+  $('vPer').textContent = fmt(perimeter(pts));
+  $('vHa').textContent = 'المساحة: ' + fmt(a / 10000, 3) + ' هكتار';
+  $('vDir').href = g.dir;
+  $('vGm').href = g.search;
+}
+$('vEdit').onclick = () => setMode('edit');
+$('vNew').onclick = () => { pts = []; $('name').value = ''; setMode('edit'); };
+$('vCopy').onclick = () => copyText(shareLink());
+
+/* ===== التشغيل ===== */
+function start(params) {
+  params = params || {};
+  if (params.n) $('name').value = params.n;
+  const p = params.p ? parseList(params.p) : [];
+  if (p.length >= MIN_PTS && p.length <= MAX_PTS) {
+    pts = p; setMode('view'); fit();
+  } else {
+    setMode('edit');
+  }
+}
+
+if (typeof google !== 'undefined' && google.script && google.script.url) {
+  // داخل Google Apps Script
+  google.script.run.withSuccessHandler(u => { if (u) BASE = u; }).getUrl();
+  google.script.url.getLocation(loc => start(loc.parameter));
+} else {
+  start(Object.fromEntries(new URLSearchParams(location.search)));
+}
+
+let tt;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 2600); }
+</script>
+</body>
+</html>
