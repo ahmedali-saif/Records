@@ -98,7 +98,6 @@
       </div>
       <div class="saved" id="savedBox" style="display:none">
  <h3>القطع المحفوظة (<span id="sCountSaved">0</span>)</h3>
- <button class="btn" id="copyAll" style="width:100%;margin-bottom:6px">📋 نسخ روابط كل القطع</button>
         <div id="savedList"></div>
       </div>
     </div>
@@ -493,22 +492,6 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
   try { shareLink = (...a) => withMap(origShare(...a)); } catch (e) {}
   try { loadSaved = () => origLoad().map(s => ({ ...s, link: withMap(s.link) })); } catch (e) {}
   try { storeSaved = l => origStore(l.map(s => ({ ...s, link: stripMap(s.link) }))); } catch (e) {}
-
-  // نسخ روابط كل القطع دفعة واحدة
-  const ca = document.getElementById('copyAll');
-  if (ca) ca.onclick = async () => {
-    const list = loadSaved();
-    if (!list.length) return;
-    const text = list.map((s, i) => `${i + 1}- ${s.name || 'قطعة'}\n${s.link}`).join('\n\n');
-    try { await navigator.clipboard.writeText(text); }
-    catch (e) {
-      const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t);
-      t.select(); document.execCommand('copy'); t.remove();
-    }
-    const old = ca.textContent; ca.textContent = '✓ تم نسخ ' + list.length + ' روابط';
-    setTimeout(() => ca.textContent = old, 2000);
-  };
-
  
   // عند فتح رابط قطعة: ارسم المخطط كاملاً وميّز القطعة المطلوبة
   const M = Q.get('m');
