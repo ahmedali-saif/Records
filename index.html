@@ -50,7 +50,8 @@
   #toast{position:fixed;z-index:2000;left:50%;top:16px;transform:translateX(-50%);background:#1d2a24;color:#fff;
     padding:8px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
   #toast.show{opacity:1}
-  .elen span.pl{background:rgba(0,90,110,.85);font-size:12px;font-weight:700;direction:rtl}
+  .elen span.pl{background:rgba(0,0,0,.7);font-size:12px;font-weight:700;direction:rtl;cursor:move;padding:2px 8px}
+  .sitem input[type=color]{width:30px;height:26px;border:none;padding:0;background:none;cursor:pointer}
   .saved{margin-top:10px;border-top:1px solid #e3ebe6;padding-top:8px}
   .saved h3{font-size:14px;margin:0 0 6px;color:#1b7a4b}
   .sitem{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #e3ebe6;border-radius:10px;margin-bottom:6px}
@@ -346,6 +347,20 @@ $('vCopy').onclick = () => copyText(shareLink());
 
 /* ===== القطع المحفوظة ===== */
 const STORE = 'savedPlots';
+const PALETTE = ['#00e5ff', '#ff9800', '#e040fb', '#76ff03', '#ff5252', '#ffd740', '#448aff'];
+function updateSaved(id, changes) {
+  const l = loadSaved(), s = l.find(x => x.id == id);
+  if (s) { Object.assign(s, changes); storeSaved(l); }
+}
+// هل النقطة داخل المضلع؟
+function inside(p, poly) {
+  let r = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a[0] > p[0]) !== (b[0] > p[0]) && p[1] < (b[1] - a[1]) * (p[0] - a[0]) / (b[0] - a[0]) + a[1]) r = !r;
+  }
+  return r;
+}
 function loadSaved() { try { return JSON.parse(localStorage.getItem(STORE)) || []; } catch (e) { return []; } }
 function storeSaved(list) { try { localStorage.setItem(STORE, JSON.stringify(list)); return true; } catch (e) { toast('تعذّر الحفظ في المتصفح'); return false; } }
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -373,9 +388,19 @@ function renderSaved() {
   savedLayer.clearLayers();
   list.forEach(s => {
     const P = plotPts(s); if (P.length < 3) return;
-    L.polygon(P, { color: '#00e5ff', weight: 2, fillColor: '#00e5ff', fillOpacity: .15, interactive: false }).addTo(savedLayer);
-    L.marker(centroid(P), { interactive: false,
-      icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: '<span class="pl">' + esc(s.name) + '</span>' }) }).addTo(savedLayer);
+    const col = s.color || PALETTE[0], c = centroid(P), lp = s.label || c;
+    L.polygon(P, { color: col, weight: 2, fillColor: col, fillOpacity: .2, interactive: false }).addTo(savedLayer);
+    // خط منقط يربط الاسم بالقطعة إذا كان الاسم خارجها
+    const line = L.polyline([c, lp], { color: col, weight: 1.5, dashArray: '4 4', interactive: false });
+    if (!inside(lp, P)) line.addTo(savedLayer);
+    const lm = L.marker(lp, { draggable: true, autoPan: true,
+      icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: `<span class="pl" style="border:2px solid ${col}">${esc(s.name)}</span>` }) }).addTo(savedLayer);
+    lm.on('drag', e => {
+      line.setLatLngs([c, e.latlng]);
+      if (inside([e.latlng.lat, e.latlng.lng], P)) savedLayer.removeLayer(line); else line.addTo(savedLayer);
+    });
+    lm.on('dragend', e => { const g = e.target.getLatLng(); updateSaved(s.id, { label: [+g.lat.toFixed(6), +g.lng.toFixed(6)] }); });
+    lm.on('dblclick', () => { updateSaved(s.id, { label: null }); renderSaved(); });   // نقر مزدوج = إرجاع الاسم للوسط
   });
   $('savedBox').style.display = list.length ? '' : 'none';
   $('sCountSaved').textContent = list.length;
@@ -383,6 +408,7 @@ function renderSaved() {
     <div class="sitem">
       <a class="sname" href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.name)}
         <small>${fmt(s.area)} م² · ${esc(s.date)}</small></a>
+      <input type="color" data-color="${s.id}" value="${esc(s.color || PALETTE[0])}" title="لون القطعة">
       <button data-copy="${s.id}" title="نسخ الرابط">📋</button>
       <button data-del="${s.id}" title="حذف">🗑</button>
     </div>`).join('');
@@ -396,12 +422,15 @@ $('savedList').addEventListener('click', e => {
     if (s && confirm('حذف قطعة "' + s.name + '"؟')) { storeSaved(list.filter(x => x !== s)); renderSaved(); }
   }
 });
+$('savedList').addEventListener('change', e => {
+  if (e.target.dataset.color) { updateSaved(e.target.dataset.color, { color: e.target.value }); renderSaved(); }
+});
 $('saveNew').onclick = () => {
   const name = $('name').value.trim();
   if (!name) { toast('اكتب اسم المالك أولاً'); $('name').focus(); return; }
   const list = loadSaved();
   list.unshift({ id: Date.now(), name, link: shareLink(), area: area(pts),
-    pts: pts.map(p => [+p[0].toFixed(6), +p[1].toFixed(6)]), date: new Date().toLocaleDateString('en-GB') });
+    pts: pts.map(p => [+p[0].toFixed(6), +p[1].toFixed(6)]), color: PALETTE[list.length % PALETTE.length], date: new Date().toLocaleDateString('en-GB') });
   if (!storeSaved(list)) return;
   pts = []; $('name').value = ''; $('manual').value = ''; render(); renderSaved();
   toast('تم حفظ قطعة "' + name + '" — ارسم القطعة التالية');
