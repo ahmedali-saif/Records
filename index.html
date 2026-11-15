@@ -461,5 +461,59 @@ if (typeof google !== 'undefined' && google.script && google.script.url) {
 let tt;
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 2600); }
 </script>
+ <script>
+/* ===== رابط المخطط كاملاً: يُرفق كل القطع المحفوظة مع رابط القطعة ===== */
+(function () {
+  const Q = new URLSearchParams(location.search);
+  const origLoad = loadSaved, origStore = storeSaved, origShare = shareLink;
+  const r6 = v => (+v).toFixed(6);
+
+  // ترميز كل القطع المحفوظة: اسم~لون~نقاط ، والقطع مفصولة بـ !
+  function encMap() {
+    return origLoad().map(s => {
+      const P = plotPts(s); if (P.length < 3) return '';
+      return [String(s.name || '').replace(/[~!]/g, ' '),
+              String(s.color || PALETTE[0]).replace('#', ''),
+              P.map(p => r6(p[0]) + ',' + r6(p[1])).join('_')].join('~');
+    }).filter(Boolean).join('!');
+  }
+  function withMap(link) {
+    try {
+      const u = new URL(link), m = encMap() || Q.get('m');
+      u.searchParams.delete('m'); if (m) u.searchParams.set('m', m);
+      return u.toString();
+    } catch (e) { return link; }
+  }
+  function stripMap(link) {
+    try { const u = new URL(link); u.searchParams.delete('m'); return u.toString(); } catch (e) { return link; }
+  }
+
+  // كل رابط يُنشأ أو يُنسخ يحمل المخطط كاملاً (ولا يُخزَّن المخطط داخل القائمة نفسها)
+  try { shareLink = (...a) => withMap(origShare(...a)); } catch (e) {}
+  try { loadSaved = () => origLoad().map(s => ({ ...s, link: withMap(s.link) })); } catch (e) {}
+  try { storeSaved = l => origStore(l.map(s => ({ ...s, link: stripMap(s.link) }))); } catch (e) {}
+
+  // عند فتح رابط قطعة: ارسم المخطط كاملاً وميّز القطعة المطلوبة
+  const M = Q.get('m');
+  if (!Q.get('p') || !M) return;
+  const target = (typeof pts !== 'undefined' && pts) ? pts : [];
+  const near = (a, b) => Math.abs(a[0] - b[0]) < 2e-6 && Math.abs(a[1] - b[1]) < 2e-6;
+  const all = target.slice();
+  savedLayer.clearLayers();
+  M.split('!').forEach(row => {
+    const [name, col, pp] = row.split('~'); if (!pp) return;
+    const P = pp.split('_').map(x => x.split(',').map(Number)).filter(p => p.length === 2 && !isNaN(p[0]) && !isNaN(p[1]));
+    if (P.length < 3) return;
+    all.push(...P);
+    if (target.length && P.every(v => target.some(t => near(v, t)))) return;   // هي نفس القطعة المطلوبة
+    const c = /^[0-9a-f]{6}$/i.test(col) ? '#' + col : PALETTE[0];
+    L.polygon(P, { color: c, weight: 2, fillColor: c, fillOpacity: .2, interactive: false }).addTo(savedLayer);
+    L.marker(centroid(P), { interactive: false,
+      icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: `<span class="pl" style="border:2px solid ${c}">${esc(name)}</span>` }) }).addTo(savedLayer);
+  });
+  if (typeof poly !== 'undefined' && poly && poly.setStyle) { poly.setStyle({ weight: 4 }); poly.bringToFront(); }
+  if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [40, 40], maxZoom: 19 });
+})();
+</script>
 </body>
 </html>
