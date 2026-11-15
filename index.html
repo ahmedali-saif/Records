@@ -50,6 +50,7 @@
   #toast{position:fixed;z-index:2000;left:50%;top:16px;transform:translateX(-50%);background:#1d2a24;color:#fff;
     padding:8px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
   #toast.show{opacity:1}
+  .elen span.pl{background:rgba(0,90,110,.85);font-size:12px;font-weight:700;direction:rtl}
   .saved{margin-top:10px;border-top:1px solid #e3ebe6;padding-top:8px}
   .saved h3{font-size:14px;margin:0 0 6px;color:#1b7a4b}
   .sitem{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #e3ebe6;border-radius:10px;margin-bottom:6px}
@@ -152,7 +153,7 @@ const gHybrid = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z
 const gRoad   = L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains: '0123', maxZoom: 21, attribution: '© Google' });
 L.control.layers({ 'قمر صناعي': gHybrid, 'خريطة الطرق': gRoad }, null, { position: 'topleft' }).addTo(map);
 
-map.on('click', e => { if (mode === 'edit') addPoint([e.latlng.lat, e.latlng.lng]); });
+map.on('click', e => { if (mode === 'edit') addPoint(snap([e.latlng.lat, e.latlng.lng])); });
 
 /* ===== حسابات ===== */
 const rad = d => d * Math.PI / 180;
@@ -209,7 +210,7 @@ function render() {
       icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: '<div class="vtx">' + (i + 1) + '</div>' })
     }).addTo(map);
     mk.on('drag', e => { pts[i] = [e.latlng.lat, e.latlng.lng]; if (poly) poly.setLatLngs(pts); updateStats(); });
-    mk.on('dragend', () => { reorder(); render(); });
+    mk.on('dragend', () => { pts[i] = snap(pts[i]); reorder(); render(); });
     layers.push(mk);
   });
   updateStats();
@@ -349,8 +350,33 @@ function loadSaved() { try { return JSON.parse(localStorage.getItem(STORE)) || [
 function storeSaved(list) { try { localStorage.setItem(STORE, JSON.stringify(list)); return true; } catch (e) { toast('تعذّر الحفظ في المتصفح'); return false; } }
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+const savedLayer = L.layerGroup().addTo(map);
+function plotPts(s) {
+  if (s.pts) return s.pts;
+  try { return parseList(new URL(s.link).searchParams.get('p') || ''); } catch (e) { return []; }
+}
+// التصاق النقطة بركن قطعة محفوظة إذا كانت قريبة منه (15 بكسل)
+function snap(p) {
+  const P = map.latLngToContainerPoint(p); let best = null, bd = 15;
+  loadSaved().forEach(s => plotPts(s).forEach(v => {
+    const d = P.distanceTo(map.latLngToContainerPoint(v)); if (d < bd) { bd = d; best = v; }
+  }));
+  return best ? [best[0], best[1]] : p;
+}
+function fitSaved() {
+  const all = []; loadSaved().forEach(s => all.push(...plotPts(s)));
+  if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [50, 50], maxZoom: 19 });
+}
+
 function renderSaved() {
   const list = loadSaved();
+  savedLayer.clearLayers();
+  list.forEach(s => {
+    const P = plotPts(s); if (P.length < 3) return;
+    L.polygon(P, { color: '#00e5ff', weight: 2, fillColor: '#00e5ff', fillOpacity: .15, interactive: false }).addTo(savedLayer);
+    L.marker(centroid(P), { interactive: false,
+      icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: '<span class="pl">' + esc(s.name) + '</span>' }) }).addTo(savedLayer);
+  });
   $('savedBox').style.display = list.length ? '' : 'none';
   $('sCountSaved').textContent = list.length;
   $('savedList').innerHTML = list.map(s => `
@@ -374,7 +400,8 @@ $('saveNew').onclick = () => {
   const name = $('name').value.trim();
   if (!name) { toast('اكتب اسم المالك أولاً'); $('name').focus(); return; }
   const list = loadSaved();
-  list.unshift({ id: Date.now(), name, link: shareLink(), area: area(pts), date: new Date().toLocaleDateString('en-GB') });
+  list.unshift({ id: Date.now(), name, link: shareLink(), area: area(pts),
+    pts: pts.map(p => [+p[0].toFixed(6), +p[1].toFixed(6)]), date: new Date().toLocaleDateString('en-GB') });
   if (!storeSaved(list)) return;
   pts = []; $('name').value = ''; $('manual').value = ''; render(); renderSaved();
   toast('تم حفظ قطعة "' + name + '" — ارسم القطعة التالية');
@@ -390,6 +417,7 @@ function start(params) {
     pts = p; setMode('view'); fit();
   } else {
     setMode('edit');
+    fitSaved();
   }
 }
 
