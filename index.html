@@ -50,6 +50,12 @@
   #toast{position:fixed;z-index:2000;left:50%;top:16px;transform:translateX(-50%);background:#1d2a24;color:#fff;
     padding:8px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
   #toast.show{opacity:1}
+  .saved{margin-top:10px;border-top:1px solid #e3ebe6;padding-top:8px}
+  .saved h3{font-size:14px;margin:0 0 6px;color:#1b7a4b}
+  .sitem{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #e3ebe6;border-radius:10px;margin-bottom:6px}
+  .sitem a.sname{flex:1;color:#1d2a24;text-decoration:none;font-weight:500;font-size:13.5px}
+  .sitem small{display:block;color:#5b6b63;font-size:11px;font-weight:400}
+  .sitem button{border:none;background:#f1f5f3;border-radius:8px;padding:4px 8px;cursor:pointer;font-size:13px}
 </style>
 </head>
 <body>
@@ -84,7 +90,14 @@
         <textarea id="manual" placeholder="24.345600, 56.712300&#10;24.346100, 56.713000&#10;24.345200, 56.713400"></textarea>
         <div class="row"><button class="btn" id="drawManual">رسم من الإحداثيات</button></div>
       </details>
-      <div class="row"><button class="btn primary" id="gen" disabled>🔗 إنشاء رابط القطعة</button></div>
+      <div class="row">
+        <button class="btn primary" id="gen" disabled>🔗 إنشاء رابط القطعة</button>
+        <button class="btn" id="saveNew" disabled>💾 حفظ وإضافة قطعة أخرى</button>
+      </div>
+      <div class="saved" id="savedBox" style="display:none">
+        <h3>القطع المحفوظة (<span id="sCountSaved">0</span>)</h3>
+        <div id="savedList"></div>
+      </div>
     </div>
 
     <!-- وضع العرض -->
@@ -210,6 +223,7 @@ function updateStats() {
   $('plist').innerHTML = pts.map((x, i) =>
     `<li><code>${x[0].toFixed(6)}, ${x[1].toFixed(6)}</code>${mode === 'edit' ? `<button data-i="${i}" title="حذف">✕</button>` : ''}</li>`).join('');
   $('gen').disabled = pts.length < MIN_PTS;
+  $('saveNew').disabled = pts.length < MIN_PTS;
   $('undo').disabled = !pts.length;
   $('out').style.display = 'none';
 }
@@ -328,6 +342,44 @@ function fillView() {
 $('vEdit').onclick = () => setMode('edit');
 $('vNew').onclick = () => { pts = []; $('name').value = ''; setMode('edit'); };
 $('vCopy').onclick = () => copyText(shareLink());
+
+/* ===== القطع المحفوظة ===== */
+const STORE = 'savedPlots';
+function loadSaved() { try { return JSON.parse(localStorage.getItem(STORE)) || []; } catch (e) { return []; } }
+function storeSaved(list) { try { localStorage.setItem(STORE, JSON.stringify(list)); return true; } catch (e) { toast('تعذّر الحفظ في المتصفح'); return false; } }
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function renderSaved() {
+  const list = loadSaved();
+  $('savedBox').style.display = list.length ? '' : 'none';
+  $('sCountSaved').textContent = list.length;
+  $('savedList').innerHTML = list.map(s => `
+    <div class="sitem">
+      <a class="sname" href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.name)}
+        <small>${fmt(s.area)} م² · ${esc(s.date)}</small></a>
+      <button data-copy="${s.id}" title="نسخ الرابط">📋</button>
+      <button data-del="${s.id}" title="حذف">🗑</button>
+    </div>`).join('');
+}
+$('savedList').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const list = loadSaved();
+  if (b.dataset.copy) { const s = list.find(x => x.id == b.dataset.copy); if (s) copyText(s.link); }
+  if (b.dataset.del) {
+    const s = list.find(x => x.id == b.dataset.del);
+    if (s && confirm('حذف قطعة "' + s.name + '"؟')) { storeSaved(list.filter(x => x !== s)); renderSaved(); }
+  }
+});
+$('saveNew').onclick = () => {
+  const name = $('name').value.trim();
+  if (!name) { toast('اكتب اسم المالك أولاً'); $('name').focus(); return; }
+  const list = loadSaved();
+  list.unshift({ id: Date.now(), name, link: shareLink(), area: area(pts), date: new Date().toLocaleDateString('en-GB') });
+  if (!storeSaved(list)) return;
+  pts = []; $('name').value = ''; $('manual').value = ''; render(); renderSaved();
+  toast('تم حفظ قطعة "' + name + '" — ارسم القطعة التالية');
+};
+renderSaved();
 
 /* ===== التشغيل ===== */
 function start(params) {
