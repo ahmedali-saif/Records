@@ -86,6 +86,10 @@
         <button class="btn" id="locate">📍 موقعي</button>
         <button class="btn" id="addMe">➕ نقطة من موقعي</button>
       </div>
+      <div class="row">
+        <label class="btn" for="kmlFile">📂 إدراج ملف KML</label>
+        <input type="file" id="kmlFile" accept=".kml,application/vnd.google-earth.kml+xml,text/xml" hidden>
+      </div>
       <details>
         <summary>إدخال الإحداثيات يدوياً</summary>
         <p class="hint">سطر لكل نقطة بصيغة: <code dir="ltr">24.3456, 56.7123</code></p>
@@ -320,6 +324,51 @@ $('drawManual').onclick = () => {
   const p = parseList($('manual').value);
   if (p.length < MIN_PTS || p.length > MAX_PTS) { toast('أدخل 3 أو 4 نقاط صحيحة'); return; }
   pts = p; reorder(); render(); fit();
+};
+
+/* ===== إدراج ملف KML ===== */
+function kmlCoords(txt) {
+  const p = txt.trim().split(/\s+/).map(t => t.split(',').map(Number))
+    .filter(v => v.length >= 2 && !isNaN(v[0]) && !isNaN(v[1])).map(v => [v[1], v[0]]);
+  if (p.length > 1 && Math.abs(p[0][0] - p[p.length - 1][0]) < 1e-9 && Math.abs(p[0][1] - p[p.length - 1][1]) < 1e-9) p.pop();
+  return p;
+}
+$('kmlFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  let doc;
+  try { doc = new DOMParser().parseFromString(await f.text(), 'text/xml'); } catch (_) {}
+  if (!doc || doc.getElementsByTagName('parsererror').length) { toast('الملف ليس KML صالحاً'); return; }
+  const tag = (el, t) => el.getElementsByTagName(t)[0];
+  const plots = [], corners = [];
+  [...doc.getElementsByTagName('Placemark')].forEach(pm => {
+    const vis = pm.getElementsByTagName('visibility')[0];
+    if (vis && vis.textContent.trim() === '0') return;   // تجاهل العناصر المخفية
+    const nm = (tag(pm, 'name') || {}).textContent || '';
+    const pg = tag(pm, 'Polygon'), pt = tag(pm, 'Point');
+    if (pg) { const c = tag(pg, 'coordinates'); if (c) plots.push({ name: nm.trim(), pts: kmlCoords(c.textContent) }); }
+    else if (pt) { const c = tag(pt, 'coordinates'); if (c) corners.push(...kmlCoords(c.textContent)); }
+  });
+  // ملف فيه نقاط الأركان فقط بدون مضلع
+  if (!plots.length && corners.length) plots.push({ name: '', pts: corners });
+  const ok = plots.filter(x => x.pts.length >= MIN_PTS && x.pts.length <= MAX_PTS), bad = plots.length - ok.length;
+  if (!ok.length) { toast(plots.length ? 'القطع في الملف ليست 3 أو 4 أركان' : 'لم أجد قطعة في الملف'); return; }
+
+  if (ok.length === 1) {   // قطعة واحدة: تُفتح للرسم والتعديل
+    pts = ok[0].pts; if (ok[0].name && !$('name').value.trim()) $('name').value = ok[0].name;
+    reorder(); render(); fit();
+    toast('تم إدراج القطعة' + (bad ? ' (تُجوهلت ' + bad + ' غير صالحة)' : ''));
+    return;
+  }
+  // عدة قطع: تُحفظ كلها في المخطط
+  const list = loadSaved(), sep = BASE.includes('?') ? '&' : '?', today = new Date().toLocaleDateString('en-GB');
+  ok.forEach((x, i) => {
+    const P = x.pts.map(p => [+p[0].toFixed(7), +p[1].toFixed(7)]), name = x.name || ('قطعة ' + (i + 1));
+    list.unshift({ id: Date.now() + i, name, area: area(P), pts: P, color: PALETTE[list.length % PALETTE.length], date: today,
+      link: BASE + sep + 'p=' + encodeURIComponent(P.map(p => p[0].toFixed(7) + ',' + p[1].toFixed(7)).join('|')) + '&n=' + encodeURIComponent(name) });
+  });
+  if (!storeSaved(list)) return;
+  renderSaved(); fitSaved();
+  toast('تم إدراج ' + ok.length + ' قطع في المخطط' + (bad ? ' (تُجوهلت ' + bad + ')' : ''));
 };
 
 function fit() { if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 19 }); }
