@@ -87,8 +87,8 @@
         <button class="btn" id="addMe">➕ نقطة من موقعي</button>
       </div>
       <div class="row">
-        <label class="btn" for="kmlFile">📂 إدراج ملف KML</label>
-        <input type="file" id="kmlFile" accept=".kml,application/vnd.google-earth.kml+xml,text/xml" hidden>
+        <label class="btn" for="kmlFile">📂 إدراج ملف (KML / Excel / CSV)</label>
+        <input type="file" id="kmlFile" accept=".kml,.csv,.txt,.xlsx,.xls" hidden>
       </div>
       <details>
         <summary>إدخال الإحداثيات يدوياً</summary>
@@ -335,9 +335,19 @@ function kmlCoords(txt) {
 }
 $('kmlFile').onchange = async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  let doc;
-  try { doc = new DOMParser().parseFromString(await f.text(), 'text/xml'); } catch (_) {}
-  if (!doc || doc.getElementsByTagName('parsererror').length) { toast('الملف ليس KML صالحاً'); return; }
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  let plots;
+  try {
+    if (ext === 'kml') plots = kmlPlots(await f.text());
+    else if (ext === 'xlsx' || ext === 'xls') plots = tablePlots(await excelText(f));
+    else plots = tablePlots(await f.text());
+  } catch (err) { toast(err.message || 'تعذّر قراءة الملف'); return; }
+  importPlots(plots);
+};
+
+function kmlPlots(text) {
+  const doc = new DOMParser().parseFromString(text, 'text/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('الملف ليس KML صالحاً');
   const tag = (el, t) => el.getElementsByTagName(t)[0];
   const plots = [], corners = [];
   [...doc.getElementsByTagName('Placemark')].forEach(pm => {
@@ -350,6 +360,52 @@ $('kmlFile').onchange = async e => {
   });
   // ملف فيه نقاط الأركان فقط بدون مضلع
   if (!plots.length && corners.length) plots.push({ name: '', pts: corners });
+  return plots;
+}
+
+// ملف Excel: تُقرأ الورقة الأولى (مكتبة SheetJS تُحمَّل عند الحاجة فقط)
+async function excelText(f) {
+  if (typeof XLSX === 'undefined') await new Promise((ok, no) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = ok; s.onerror = () => no(new Error('تعذّر تحميل قارئ Excel — تحقق من الإنترنت'));
+    document.head.appendChild(s);
+  });
+  const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+  return XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);
+}
+
+// ملف جدول (CSV / TXT / Excel): سطر لكل ركن، بإحداثيات الكروكي (شمالي/شرقي) أو خط عرض/طول.
+// القطع تُفصل بسطر فارغ، أو بعمود فيه اسم القطعة/المالك.
+function tablePlots(text) {
+  const datum = ($('utmDatum') || {}).value || 'wgs', groups = new Map();
+  let blank = 0, last = null;
+  text.split(/\r?\n/).forEach(line => {
+    const cells = line.split(/[,;\t]/).map(c => c.trim().replace(/^"|"$/g, ''));
+    if (!cells.some(Boolean)) { blank++; return; }
+    const nums = (line.match(/-?\d+(?:\.\d+)?/g) || []);
+    const N = nums.map(Number).find(v => v >= 1000000 && v < 10000000), E = nums.map(Number).find(v => v >= 100000 && v < 1000000);
+    let p = null;
+    if (N && E && window.toWGS) p = toWGS(E, N, 40, false, datum);
+    else {
+      const dec = nums.filter(x => x.includes('.')).map(Number), use = dec.length >= 2 ? dec : nums.map(Number);
+      for (let i = 0; i + 1 < use.length && !p; i++) {
+        let [a, b] = [use[i], use[i + 1]];
+        if (Math.abs(a) > 90 && Math.abs(b) <= 90) [a, b] = [b, a];
+        if (Math.abs(a) <= 90 && Math.abs(b) <= 180 && (a || b)) p = [a, b];
+      }
+    }
+    if (!p) return;                                   // سطر عناوين أو بدون إحداثيات
+    const label = cells.find(c => /\p{L}/u.test(c) && !/^-?\d/.test(c)) || '';
+    const key = label || ('#' + blank);
+    if (!groups.has(key)) groups.set(key, { name: label, pts: [] });
+    groups.get(key).pts.push(p); last = key;
+  });
+  if (!groups.size) throw new Error('لم أجد إحداثيات في الملف');
+  return [...groups.values()];
+}
+
+function importPlots(plots) {
   const ok = plots.filter(x => x.pts.length >= MIN_PTS && x.pts.length <= MAX_PTS), bad = plots.length - ok.length;
   if (!ok.length) { toast(plots.length ? 'القطع في الملف ليست 3 أو 4 أركان' : 'لم أجد قطعة في الملف'); return; }
 
@@ -369,7 +425,7 @@ $('kmlFile').onchange = async e => {
   if (!storeSaved(list)) return;
   renderSaved(); fitSaved();
   toast('تم إدراج ' + ok.length + ' قطع في المخطط' + (bad ? ' (تُجوهلت ' + bad + ')' : ''));
-};
+}
 
 function fit() { if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 19 }); }
 
@@ -605,6 +661,7 @@ function toWGS(E,N,zone,south,datum){
   const X2=tx+m*(X-rz*Y+ry*Z),Y2=ty+m*(rz*X+Y-rx*Z),Z2=tz+m*(-ry*X+rx*Y+Z);
   const [a2,o2]=ecefToGeo(X2,Y2,Z2,...WGS);return [a2/r,o2/r];
 }
+  window.toWGS = toWGS;   // يستخدمه إدراج الملفات
   const box = document.getElementById('manual'), btn = document.getElementById('drawManual');
   if (!box || !btn) return;
   // اختيار المرجع
