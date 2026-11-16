@@ -99,6 +99,7 @@
       <div class="row">
         <button class="btn primary" id="gen" disabled>🔗 إنشاء رابط القطعة</button>
         <button class="btn" id="saveNew" disabled>💾 حفظ وإضافة قطعة أخرى</button>
+               <button class="btn" id="newPlot">➕ قطعة جديدة</button>
       </div>
       <div class="saved" id="savedBox" style="display:none">
  <h3>القطع المحفوظة (<span id="sCountSaved">0</span>)</h3>
@@ -149,7 +150,7 @@ const DEFAULT_CENTER = [24.35, 56.72], DEFAULT_ZOOM = 10;   // شمال البا
 let BASE = location.origin + location.pathname;             // يُستبدل تلقائياً في Apps Script
 
 /* ===== الحالة ===== */
-let pts = [], layers = [], poly = null, mode = 'edit', meMarker = null;
+let pts = [], layers = [], poly = null, mode = 'edit', meMarker = null, editingId = null;
 const $ = id => document.getElementById(id);
 
 /* ===== الخريطة (طبقات جوجل) ===== */
@@ -481,7 +482,7 @@ function plotPts(s) {
 // التصاق النقطة بركن قطعة محفوظة إذا كانت قريبة منه (15 بكسل)
 function snap(p) {
   const P = map.latLngToContainerPoint(p); let best = null, bd = 15;
-  loadSaved().forEach(s => plotPts(s).forEach(v => {
+ loadSaved().forEach(s => s.id != editingId && plotPts(s).forEach(v => {
     const d = P.distanceTo(map.latLngToContainerPoint(v)); if (d < bd) { bd = d; best = v; }
   }));
   return best ? [best[0], best[1]] : p;
@@ -495,7 +496,7 @@ function renderSaved() {
   const list = loadSaved();
   savedLayer.clearLayers();
   list.forEach(s => {
-    const P = plotPts(s); if (P.length < 3) return;
+    const P = plotPts(s); if (P.length < 3 || s.id == editingId) return;   // القطعة المفتوحة للتعديل تُرسم بالأصفر
     const col = s.color || PALETTE[0], c = centroid(P), lp = s.label || c;
     L.polygon(P, { color: col, weight: 2, fillColor: col, fillOpacity: .2, interactive: false }).addTo(savedLayer);
     // خط منقط يربط الاسم بالقطعة إذا كان الاسم خارجها
@@ -514,7 +515,7 @@ function renderSaved() {
   $('sCountSaved').textContent = list.length;
   $('savedList').innerHTML = list.map(s => `
     <div class="sitem">
-      <a class="sname" href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.name)}
+     <a class="sname" href="#" data-go="${s.id}">${s.id == editingId ? '✏️ ' : ''}${esc(s.name)}
         <small>${fmt(s.area)} م² · ${esc(s.date)}</small></a>
       <input type="color" data-color="${s.id}" value="${esc(s.color || PALETTE[0])}" title="لون القطعة">
       <button data-copy="${s.id}" title="نسخ الرابط">📋</button>
@@ -522,19 +523,47 @@ function renderSaved() {
     </div>`).join('');
 }
 $('savedList').addEventListener('click', e => {
+  const g = e.target.closest('[data-go]');
+  if (g) { e.preventDefault(); openSaved(g.dataset.go); return; }
   const b = e.target.closest('button'); if (!b) return;
   const list = loadSaved();
   if (b.dataset.copy) { const s = list.find(x => x.id == b.dataset.copy); if (s) copyText(s.link); }
   if (b.dataset.del) {
     const s = list.find(x => x.id == b.dataset.del);
-    if (s && confirm('حذف قطعة "' + s.name + '"؟')) { storeSaved(list.filter(x => x !== s)); renderSaved(); }
+  if (s && confirm('حذف قطعة "' + s.name + '"؟')) { storeSaved(list.filter(x => x !== s)); if (s.id == editingId) endEdit(); else renderSaved(); }
   }
 });
 $('savedList').addEventListener('change', e => {
   if (e.target.dataset.color) { updateSaved(e.target.dataset.color, { color: e.target.value }); renderSaved(); }
 });
+/* ===== الانتقال إلى قطعة محفوظة وتعديلها ===== */
+function openSaved(id) {
+  const s = loadSaved().find(x => x.id == id); if (!s) return;
+  editingId = s.id; pts = plotPts(s).map(p => [+p[0], +p[1]]); $('name').value = s.name;
+  if (mode !== 'edit') setMode('edit');
+  render(); renderSaved();
+  $('saveNew').textContent = '💾 حفظ التعديل';
+  // التكبير على القطعة مع ترك مساحة اللوحة
+  const pn = $('panel'), mob = innerWidth <= 640;
+  map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [40, 40], maxZoom: 19,
+    paddingBottomRight: mob ? [40, pn.offsetHeight + 20] : [pn.offsetWidth + 50, 40] });
+  toast('تعديل "' + s.name + '": اسحب النقاط ثم اضغط حفظ التعديل');
+}
+function endEdit() {
+  editingId = null; pts = []; $('name').value = ''; $('manual').value = '';
+  $('saveNew').textContent = '💾 حفظ وإضافة قطعة أخرى';
+  render(); renderSaved();
+}
+$('newPlot').onclick = () => { endEdit(); toast('ارسم القطعة الجديدة على الخريطة'); };
+
 $('saveNew').onclick = () => {
   const name = $('name').value.trim();
+  if (editingId) {   // حفظ تعديل قطعة موجودة
+    if (!name) { toast('اكتب اسم المالك أولاً'); $('name').focus(); return; }
+    updateSaved(editingId, { name, link: shareLink(), area: area(pts), pts: pts.map(p => [+p[0].toFixed(7), +p[1].toFixed(7)]) });
+    endEdit(); toast('تم حفظ تعديل قطعة "' + name + '"');
+    return;
+  }
   if (!name) { toast('اكتب اسم المالك أولاً'); $('name').focus(); return; }
   const list = loadSaved();
   list.unshift({ id: Date.now(), name, link: shareLink(), area: area(pts),
