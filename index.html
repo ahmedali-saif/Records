@@ -158,19 +158,22 @@ map.on('click', e => { if (mode === 'edit') addPoint(snap([e.latlng.lat, e.latln
 
 /* ===== حسابات ===== */
 const rad = d => d * Math.PI / 180;
+// إسقاط محلي على إهليلج WGS84 (دقيق للقطع الصغيرة ويطابق مساحات الكروكي)
+function xy(p, lat0) {
+  const e2 = 0.00669437999014, s = Math.sin(rad(lat0)), w = 1 - e2 * s * s;
+  const Mr = R * (1 - e2) / Math.pow(w, 1.5), Nr = R / Math.sqrt(w);
+  return [rad(p[1]) * Nr * Math.cos(rad(lat0)), rad(p[0]) * Mr];
+}
 function area(p) {
   if (p.length < 3) return 0;
+  const lat0 = centroid(p)[0], q = p.map(v => xy(v, lat0));
   let s = 0;
-  for (let i = 0; i < p.length; i++) {
-    const a = p[i], b = p[(i + 1) % p.length];
-    s += rad(b[1] - a[1]) * (2 + Math.sin(rad(a[0])) + Math.sin(rad(b[0])));
-  }
-  return Math.abs(s * R * R / 2);
+  for (let i = 0; i < q.length; i++) { const a = q[i], b = q[(i + 1) % q.length]; s += a[0] * b[1] - b[0] * a[1]; }
+  return Math.abs(s / 2);
 }
 function dist(a, b) {
-  const dLat = rad(b[0] - a[0]), dLng = rad(b[1] - a[1]);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
+  const lat0 = (a[0] + b[0]) / 2, A = xy(a, lat0), B = xy(b, lat0);
+  return Math.hypot(B[0] - A[0], B[1] - A[1]);
 }
 function perimeter(p) {
   if (p.length < 2) return 0;
@@ -241,7 +244,7 @@ function addPoint(p) {
 }
 
 /* ===== الروابط ===== */
-function encodePts() { return pts.map(p => p[0].toFixed(6) + ',' + p[1].toFixed(6)).join('|'); }
+function encodePts() { return pts.map(p => p[0].toFixed(7) + ',' + p[1].toFixed(7)).join('|'); }
 function shareLink() {
   const name = $('name').value.trim();
   const sep = BASE.includes('?') ? '&' : '?';
@@ -430,7 +433,7 @@ $('saveNew').onclick = () => {
   if (!name) { toast('اكتب اسم المالك أولاً'); $('name').focus(); return; }
   const list = loadSaved();
   list.unshift({ id: Date.now(), name, link: shareLink(), area: area(pts),
-    pts: pts.map(p => [+p[0].toFixed(6), +p[1].toFixed(6)]), color: PALETTE[list.length % PALETTE.length], date: new Date().toLocaleDateString('en-GB') });
+    pts: pts.map(p => [+p[0].toFixed(7), +p[1].toFixed(7)]), color: PALETTE[list.length % PALETTE.length], date: new Date().toLocaleDateString('en-GB') });
   if (!storeSaved(list)) return;
   pts = []; $('name').value = ''; $('manual').value = ''; render(); renderSaved();
   toast('تم حفظ قطعة "' + name + '" — ارسم القطعة التالية');
@@ -466,7 +469,7 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 (function () {
   const Q = new URLSearchParams(location.search);
   const origLoad = loadSaved, origStore = storeSaved, origShare = shareLink;
-  const r6 = v => (+v).toFixed(6);
+  const r6 = v => (+v).toFixed(7);
 
   // ترميز كل القطع المحفوظة: اسم~لون~نقاط ، والقطع مفصولة بـ !
   function encMap() {
@@ -495,12 +498,12 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
  
   // عند فتح رابط قطعة: ارسم المخطط كاملاً وميّز القطعة المطلوبة
   const M = Q.get('m');
-  if (!Q.get('p') || !M) return;
+  if (!Q.get('p')) return;
   const target = (typeof pts !== 'undefined' && pts) ? pts : [];
   const near = (a, b) => Math.abs(a[0] - b[0]) < 2e-6 && Math.abs(a[1] - b[1]) < 2e-6;
   const all = target.slice();
-  savedLayer.clearLayers();
-  M.split('!').forEach(row => {
+  if (M) savedLayer.clearLayers();
+  (M || '').split('!').forEach(row => {
     const [name, col, pp] = row.split('~'); if (!pp) return;
     const P = pp.split('_').map(x => x.split(',').map(Number)).filter(p => p.length === 2 && !isNaN(p[0]) && !isNaN(p[1]));
     if (P.length < 3) return;
@@ -512,7 +515,68 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
       icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: `<span class="pl" style="border:2px solid ${c}">${esc(name)}</span>` }) }).addTo(savedLayer);
   });
   if (typeof poly !== 'undefined' && poly && poly.setStyle) { poly.setStyle({ weight: 4 }); poly.bringToFront(); }
-  if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [40, 40], maxZoom: 19 });
+  // التكبير مع ترك مساحة اللوحة حتى لا تغطي المخطط
+  setTimeout(() => {
+    if (!all.length) return;
+    map.invalidateSize();
+    const pn = document.getElementById('panel'), mob = innerWidth <= 640;
+    const ph = pn ? pn.offsetHeight : 0, pw = pn ? pn.offsetWidth : 0;
+    map.fitBounds(L.latLngBounds(all), {
+      paddingTopLeft: [30, 30],
+      paddingBottomRight: mob ? [30, ph + 20] : [pw + 40, 30],
+      maxZoom: 19
+    });
+  }, 300);
+})();
+</script>
+<script>
+/* ===== إدخال إحداثيات الكروكي (UTM) وتحويلها تلقائياً ===== */
+(function () {
+function utmToGeo(E,N,zone,south,a,f){
+  const k0=0.9996,e2=f*(2-f),ep2=e2/(1-e2),e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
+  const x=E-500000,y=south?N-10000000:N;
+  const M=y/k0,mu=M/(a*(1-e2/4-3*e2*e2/64-5*e2**3/256));
+  const p1=mu+(3*e1/2-27*e1**3/32)*Math.sin(2*mu)+(21*e1*e1/16-55*e1**4/32)*Math.sin(4*mu)+(151*e1**3/96)*Math.sin(6*mu)+(1097*e1**4/512)*Math.sin(8*mu);
+  const s=Math.sin(p1),c=Math.cos(p1),t=Math.tan(p1);
+  const N1=a/Math.sqrt(1-e2*s*s),T1=t*t,C1=ep2*c*c,R1=a*(1-e2)/Math.pow(1-e2*s*s,1.5),D=x/(N1*k0);
+  const lat=p1-(N1*t/R1)*(D*D/2-(5+3*T1+10*C1-4*C1*C1-9*ep2)*D**4/24+(61+90*T1+298*C1+45*T1*T1-252*ep2-3*C1*C1)*D**6/720);
+  const lon0=((zone-1)*6-180+3)*Math.PI/180;
+  const lon=lon0+(D-(1+2*T1+C1)*D**3/6+(5-2*C1+28*T1-3*C1*C1+8*ep2+24*T1*T1)*D**5/120)/c;
+  return [lat,lon];
+}
+function geoToEcef(lat,lon,a,f){const e2=f*(2-f),n=a/Math.sqrt(1-e2*Math.sin(lat)**2);return [n*Math.cos(lat)*Math.cos(lon),n*Math.cos(lat)*Math.sin(lon),n*(1-e2)*Math.sin(lat)];}
+function ecefToGeo(X,Y,Z,a,f){const e2=f*(2-f),p=Math.hypot(X,Y);let lat=Math.atan2(Z,p*(1-e2));for(let i=0;i<10;i++){const n=a/Math.sqrt(1-e2*Math.sin(lat)**2);lat=Math.atan2(Z+e2*n*Math.sin(lat),p);}return [lat,Math.atan2(Y,X)];}
+const WGS=[6378137,1/298.257223563],CLK=[6378249.145,1/293.465];
+const PSD=[-180.624,-225.516,173.919,-0.81,-1.898,8.336,16.71006];
+function toWGS(E,N,zone,south,datum){
+  const r=Math.PI/180;
+  if(datum==='wgs'){const [la,lo]=utmToGeo(E,N,zone,south,...WGS);return [la/r,lo/r];}
+  const [la,lo]=utmToGeo(E,N,zone,south,...CLK);const [X,Y,Z]=geoToEcef(la,lo,...CLK);
+  const [tx,ty,tz,rx0,ry0,rz0,ds]=PSD,as=Math.PI/180/3600,rx=rx0*as,ry=ry0*as,rz=rz0*as,m=1+ds*1e-6;
+  const X2=tx+m*(X-rz*Y+ry*Z),Y2=ty+m*(rz*X+Y-rx*Z),Z2=tz+m*(-ry*X+rx*Y+Z);
+  const [a2,o2]=ecefToGeo(X2,Y2,Z2,...WGS);return [a2/r,o2/r];
+}
+  const box = document.getElementById('manual'), btn = document.getElementById('drawManual');
+  if (!box || !btn) return;
+  // اختيار المرجع
+  const sel = document.createElement('select');
+  sel.id = 'utmDatum';
+  sel.style.cssText = 'width:100%;margin:6px 0;padding:6px;border-radius:8px;font:inherit';
+  sel.innerHTML = '<option value="wgs">إحداثيات الكروكي: WGS84 (الافتراضي)</option><option value="psd">إحداثيات الكروكي: PSD93 (مخططات قديمة)</option>';
+  box.insertAdjacentElement('afterend', sel);
+  box.placeholder += '\nأو الصق جدول الكروكي كما هو:\n1 2 2692148.25 472174.96 20.79';
+
+  // قبل الرسم: أي سطر فيه رقم شمالي (7 خانات) وشرقي (6 خانات) يُحوَّل إلى خط عرض وطول
+  document.addEventListener('click', e => {
+    if (e.target !== btn && !btn.contains(e.target)) return;
+    box.value = box.value.split(/\n/).map(line => {
+      const nums = (line.match(/\d+(\.\d+)?/g) || []).map(Number);
+      const N = nums.find(v => v >= 1000000 && v < 10000000), E = nums.find(v => v >= 100000 && v < 1000000);
+      if (!N || !E) return line;
+      const g = toWGS(E, N, 40, false, sel.value);
+      return g[0].toFixed(7) + ', ' + g[1].toFixed(7);
+    }).join('\n');
+  }, true);
 })();
 </script>
 </body>
