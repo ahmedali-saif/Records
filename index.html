@@ -575,11 +575,13 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
   const Q = new URLSearchParams(location.search);
   const origLoad = loadSaved, origStore = storeSaved, origShare = shareLink;
   const r6 = v => (+v).toFixed(7);
+  const NEAR_LINK = 2000, NEAR_VIEW = 300;   // بالمتر: القطع المرفقة بالرابط / القطع الداخلة في التكبير
 
   // ترميز كل القطع المحفوظة: اسم~لون~نقاط ، والقطع مفصولة بـ !
-  function encMap() {
+  function encMap(c) {
     return origLoad().map(s => {
       const P = plotPts(s); if (P.length < 3) return '';
+      if (c && dist(c, centroid(P)) > NEAR_LINK) return '';   // قطعة في منطقة أخرى
       return [String(s.name || '').replace(/[~!]/g, ' '),
               String(s.color || PALETTE[0]).replace('#', ''),
               P.map(p => r6(p[0]) + ',' + r6(p[1])).join('_')].join('~');
@@ -587,7 +589,8 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
   }
   function withMap(link) {
     try {
-      const u = new URL(link), m = encMap() || Q.get('m');
+      const u = new URL(link), tp = parseList(u.searchParams.get('p') || '');
+      const m = encMap(tp.length ? centroid(tp) : null) || Q.get('m');
       u.searchParams.delete('m'); if (m) u.searchParams.set('m', m);
       return u.toString();
     } catch (e) { return link; }
@@ -612,7 +615,7 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
     const [name, col, pp] = row.split('~'); if (!pp) return;
     const P = pp.split('_').map(x => x.split(',').map(Number)).filter(p => p.length === 2 && !isNaN(p[0]) && !isNaN(p[1]));
     if (P.length < 3) return;
-    all.push(...P);
+    if (!target.length || dist(centroid(target), centroid(P)) <= NEAR_VIEW) all.push(...P);
     if (target.length && P.every(v => target.some(t => near(v, t)))) return;   // هي نفس القطعة المطلوبة
     const c = /^[0-9a-f]{6}$/i.test(col) ? '#' + col : PALETTE[0];
     L.polygon(P, { color: c, weight: 2, fillColor: c, fillOpacity: .2, interactive: false }).addTo(savedLayer);
@@ -683,6 +686,53 @@ function toWGS(E,N,zone,south,datum){
       return g[0].toFixed(7) + ', ' + g[1].toFixed(7);
     }).join('\n');
   }, true);
+})();
+</script>
+<script>
+/* ===== مزامنة القطع المحفوظة مع Google Sheets (لتظهر على كل الأجهزة) ===== */
+const SYNC_URL = '';   // ← الصق هنا رابط تطبيق Apps Script (ينتهي بـ /exec)
+(function () {
+  if (!SYNC_URL) return;
+  const KEYS = ['id', 'name', 'color', 'pts', 'label', 'area', 'date'];
+  const pick = s => Object.fromEntries(KEYS.map(k => [k, s[k] ?? null]));
+  const same = (a, b) => JSON.stringify(pick(a)) === JSON.stringify(pick(b));
+  const raw = () => { try { return JSON.parse(localStorage.getItem(STORE)) || []; } catch (e) { return []; } };
+  const linkOf = s => BASE + (BASE.includes('?') ? '&' : '?') + 'p=' +
+    encodeURIComponent(s.pts.map(p => (+p[0]).toFixed(7) + ',' + (+p[1]).toFixed(7)).join('|')) + '&n=' + encodeURIComponent(s.name || '');
+  // القطع التي وصلت للجدول من هذا الجهاز (حتى لا تُعاد قطعة حُذفت من جهاز آخر)
+  const SYNCED = 'savedPlotsSynced';
+  const synced = () => { try { return new Set(JSON.parse(localStorage.getItem(SYNCED)) || []); } catch (e) { return new Set(); } };
+  const markSynced = (add, del = []) => { const s = synced(); add.forEach(i => s.add(String(i))); del.forEach(i => s.delete(String(i)));
+    try { localStorage.setItem(SYNCED, JSON.stringify([...s])); } catch (e) {} };
+  const post = body => fetch(SYNC_URL, { method: 'POST', body: JSON.stringify(body) }).then(r => r.json())
+    .then(r => { markSynced((body.save || []).map(s => s.id), body.del || []); return r; });
+
+  // كل تغيير في القائمة (حفظ/إدراج/لون/اسم/حذف) يُرسَل إلى الجدول
+  const store0 = storeSaved;
+  storeSaved = list => {
+    const before = raw(), ok = store0(list); if (!ok) return ok;
+    const after = raw(), ids = new Set(after.map(s => String(s.id)));
+    const save = after.filter(s => { const o = before.find(x => String(x.id) === String(s.id)); return !o || !same(o, s); }).map(pick);
+    const del = before.filter(s => !ids.has(String(s.id))).map(s => s.id);
+    if (save.length || del.length)
+      post({ save, del }).catch(() => toast('⚠️ لم تتم المزامنة — القطع محفوظة على هذا الجهاز فقط'));
+    return ok;
+  };
+
+  // عند فتح الصفحة: تحميل القطع من الجدول، ورفع القطع الموجودة على هذا الجهاز فقط
+  fetch(SYNC_URL).then(r => r.json()).then(remote => {
+    if (!Array.isArray(remote)) return;
+    const local = raw(), rid = new Set(remote.map(s => String(s.id))), was = synced();
+    // قطعة محلية ليست في الجدول: إن لم تُرفع من قبل تُرفع الآن، وإن رُفعت سابقاً فقد حُذفت من جهاز آخر
+    const onlyLocal = local.filter(s => !rid.has(String(s.id)) && !was.has(String(s.id)) && s.pts);
+    markSynced([...rid]);
+    const merged = remote.filter(s => Array.isArray(s.pts) && s.pts.length >= 3).map(s => ({ ...s, link: linkOf(s) })).concat(onlyLocal);
+    merged.sort((a, b) => b.id - a.id);
+    store0(merged);
+    if (onlyLocal.length) post({ save: onlyLocal.map(pick), del: [] }).catch(() => {});
+    if (!new URLSearchParams(location.search).get('m')) renderSaved();
+    if (mode === 'edit' && !pts.length) fitSaved();
+  }).catch(() => toast('⚠️ تعذّر الاتصال بجدول القطع — تُعرض القطع المحفوظة على هذا الجهاز فقط'));
 })();
 </script>
 </body>
