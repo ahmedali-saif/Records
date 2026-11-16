@@ -103,6 +103,7 @@
       </div>
       <div class="saved" id="savedBox" style="display:none">
  <h3>القطع المحفوظة (<span id="sCountSaved">0</span>)</h3>
+<input type="text" id="sSearch" placeholder="🔍 بحث باسم المالك أو القطعة" style="margin-bottom:6px">
         <div id="savedList"></div>
       </div>
     </div>
@@ -521,7 +522,28 @@ function renderSaved() {
       <button data-copy="${s.id}" title="نسخ الرابط">📋</button>
       <button data-del="${s.id}" title="حذف">🗑</button>
     </div>`).join('');
+  filterSaved();
 }
+
+/* ===== البحث في القطع المحفوظة ===== */
+const norm = s => String(s).replace(/[\u064B-\u0652\u0640]/g, '').replace(/[أإآ]/g, 'ا')
+  .replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase().trim();
+function filterSaved() {
+  const q = norm($('sSearch').value), items = [...$('savedList').children]; let shown = 0;
+  items.forEach(el => {
+    const ok = !q || norm(el.querySelector('.sname').firstChild.textContent).includes(q);
+    el.style.display = ok ? '' : 'none'; if (ok) shown++;
+  });
+  $('sCountSaved').textContent = q ? shown + ' من ' + items.length : items.length;
+}
+$('sSearch').addEventListener('input', filterSaved);
+// Enter: الانتقال إلى أول نتيجة
+$('sSearch').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const v = [...$('savedList').children].find(el => el.style.display !== 'none');
+  if (v) openSaved(v.querySelector('[data-go]').dataset.go);
+});
+ 
 $('savedList').addEventListener('click', e => {
   const g = e.target.closest('[data-go]');
   if (g) { e.preventDefault(); openSaved(g.dataset.go); return; }
