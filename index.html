@@ -584,7 +584,7 @@ $('savedList').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.view) { goSaved(b.dataset.view); return; }
   const list = loadSaved();
-  if (b.dataset.copy) { const s = list.find(x => x.id == b.dataset.copy); if (s) copyText(s.link); }
+   if (b.dataset.copy) { const s = list.find(x => x.id == b.dataset.copy); if (s) copyText(plotLink(s)); }
   if (b.dataset.del) {
     const s = list.find(x => x.id == b.dataset.del);
   if (s && confirm('حذف قطعة "' + s.name + '"؟')) { storeSaved(list.filter(x => x !== s)); if (s.id == editingId) endEdit(); else renderSaved(); }
@@ -630,6 +630,12 @@ function renameSaved(id, nm) {
   updateSaved(s.id, { name: nm, link });
   renderSaved(); toast('تم تغيير الاسم إلى "' + nm + '"');
 }
+ // رابط القطعة يُبنى لحظة النسخ من نقاطها والعنوان الحالي للصفحة (لا يُعتمد على الرابط المخزّن)
+function plotLink(s) {
+  const P = plotPts(s), sep = BASE.includes('?') ? '&' : '?';
+  return BASE + sep + 'p=' + encodeURIComponent(P.map(p => (+p[0]).toFixed(7) + ',' + (+p[1]).toFixed(7)).join('|')) +
+    '&n=' + encodeURIComponent(s.name || '');
+}
  /* ===== نافذة: هل تريد التعديل على القطعة؟ ===== */
 let pmId = null;
 function plotMenu(id) {
@@ -651,7 +657,7 @@ $('pmInput').addEventListener('keydown', e => { if (e.key === 'Enter') pmSaveNam
 $('pmPts').onclick = () => { const id = pmId; pmClose(); openSaved(id); };
 $('pmCopy').onclick = () => {
   const s = loadSaved().find(x => x.id == pmId); pmClose();
-  if (s) copyText(s.link);
+    if (s) copyText(plotLink(s));
 };
 $('pmCancel').onclick = pmClose;
 $('pmenu').onclick = e => { if (e.target.id === 'pmenu') pmClose(); };   // الضغط خارج النافذة = إلغاء
@@ -711,22 +717,29 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
   const Q = new URLSearchParams(location.search);
   const origLoad = loadSaved, origStore = storeSaved, origShare = shareLink;
   const r6 = v => (+v).toFixed(7);
-  const NEAR_LINK = 2000, NEAR_VIEW = 300;   // بالمتر: القطع المرفقة بالرابط / القطع الداخلة في التكبير
-
+  const NEAR_LINK = 2000, NEAR_VIEW = 300, MAX_URL = 6000;   // أقصى طول للرابط بالحروف
   // ترميز كل القطع المحفوظة: اسم~لون~نقاط ، والقطع مفصولة بـ !
-  function encMap(c) {
-    return origLoad().map(s => {
-      const P = plotPts(s); if (P.length < 3) return '';
-      if (c && dist(c, centroid(P)) > NEAR_LINK) return '';   // قطعة في منطقة أخرى
-      return [String(s.name || '').replace(/[~!]/g, ' '),
-              String(s.color || PALETTE[0]).replace('#', ''),
-              P.map(p => r6(p[0]) + ',' + r6(p[1])).join('_')].join('~');
-    }).filter(Boolean).join('!');
+  function encMap(c, budget) {
+    const rows = origLoad().map(s => {
+      const P = plotPts(s); if (P.length < 3) return null;
+      const d = c ? dist(c, centroid(P)) : 0;
+      if (c && d > NEAR_LINK) return null;   // قطعة في منطقة أخرى
+      return { d, t: [String(s.name || '').replace(/[~!]/g, ' '),
+                      String(s.color || PALETTE[0]).replace('#', ''),
+                      P.map(p => (+p[0]).toFixed(6) + ',' + (+p[1]).toFixed(6)).join('_')].join('~') };
+    }).filter(Boolean).sort((a, b) => a.d - b.d);   // الأقرب أولاً
+    const out = []; let len = 0;
+    for (const r of rows) {
+      const l = encodeURIComponent(r.t).length + 3;
+      if (budget && len + l > budget) break;   // توقف عند الوصول للحد
+      out.push(r.t); len += l;
+    }
+    return out.join('!');
   }
   function withMap(link) {
     try {
       const u = new URL(link), tp = parseList(u.searchParams.get('p') || '');
-      const m = encMap(tp.length ? centroid(tp) : null) || Q.get('m');
+           const m = encMap(tp.length ? centroid(tp) : null, MAX_URL - link.length) || Q.get('m');
       u.searchParams.delete('m'); if (m) u.searchParams.set('m', m);
       return u.toString();
     } catch (e) { return link; }
