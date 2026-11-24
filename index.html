@@ -52,6 +52,13 @@
   #toast.show{opacity:1}
   .elen span.pl{background:rgba(0,0,0,.7);font-size:12px;font-weight:700;direction:rtl;cursor:move;padding:2px 8px}
    #map.nolbl .elen span.pl{display:none}
+   #pmenu{position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
+  #pmenu.show{display:flex}
+  #pmenu .card{background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.3);width:100%;max-width:330px;padding:18px 16px;text-align:center}
+  #pmenu .q{font-size:13px;color:#5b6b63;margin:0 0 4px}
+  #pmenu h4{margin:0 0 2px;font-size:18px;color:#1b7a4b}
+  #pmenu .inf{font-size:12px;color:#5b6b63;margin:0 0 12px;direction:rtl}
+  #pmenu .btn{display:block;width:100%;margin-top:7px}
   .sitem input[type=color]{width:30px;height:26px;border:none;padding:0;background:none;cursor:pointer}
   .saved{margin-top:10px;border-top:1px solid #e3ebe6;padding-top:8px}
   .saved h3{font-size:14px;margin:0 0 6px;color:#1b7a4b}
@@ -144,6 +151,15 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="pmenu"><div class="card">
+  <p class="q">هل تريد التعديل على القطعة؟</p>
+  <h4 id="pmTitle"></h4>
+  <p class="inf" id="pmInfo"></p>
+  <input type="text" id="pmInput" placeholder="اسم القطعة / المالك">
+  <button class="btn primary" id="pmSave">💾 حفظ الاسم</button>
+  <button class="btn" id="pmPts">📐 تعديل الأركان</button>
+  <button class="btn" id="pmCancel">إلغاء</button>
+</div></div>
 
 <script>
 /* ===== الإعدادات ===== */
@@ -505,7 +521,7 @@ function renderSaved() {
     const P = plotPts(s); if (P.length < 3 || s.id == editingId) return;   // القطعة المفتوحة للتعديل تُرسم بالأصفر
     const col = s.color || PALETTE[0], c = centroid(P), lp = s.label || c;
         L.polygon(P, { renderer: cvs, color: col, weight: 2, fillColor: col, fillOpacity: .2 })
-      .on('click', e => { if (drawing || editingId) return; L.DomEvent.stopPropagation(e); renameSaved(s.id); })
+            .on('click', e => { if (drawing || editingId) return; L.DomEvent.stopPropagation(e); plotMenu(s.id); })
       .addTo(savedLayer);
     // خط منقط يربط الاسم بالقطعة إذا كان الاسم خارجها
     const line = L.polyline([c, lp], { renderer: cvs, color: col, weight: 1.5, dashArray: '4 4', interactive: false });
@@ -518,7 +534,7 @@ function renderSaved() {
     });
     lm.on('dragend', e => { const g = e.target.getLatLng(); updateSaved(s.id, { label: [+g.lat.toFixed(6), +g.lng.toFixed(6)] }); });
     let ct;   // نقرة واحدة = تعديل الاسم، نقر مزدوج = إرجاع الاسم للوسط
-    lm.on('click', () => { if (drawing || editingId) return; clearTimeout(ct); ct = setTimeout(() => renameSaved(s.id), 250); });
+    lm.on('click', () => { if (drawing || editingId) return; clearTimeout(ct); ct = setTimeout(() => plotMenu(s.id), 250); });
     lm.on('dblclick', () => { clearTimeout(ct); updateSaved(s.id, { label: null }); renderSaved(); }); });
   $('savedBox').style.display = list.length ? '' : 'none';
   $('sCountSaved').textContent = list.length;
@@ -604,15 +620,36 @@ function goSaved(id) {
   toast(s.name + ' · ' + fmt(s.area) + ' م²');
 }
  /* ===== تعديل اسم القطعة فقط ===== */
-function renameSaved(id) {
+function renameSaved(id, nm) {
   const s = loadSaved().find(x => x.id == id); if (!s) return;
-  const nm = (prompt('اسم القطعة / المالك:', s.name) || '').trim();
+  nm = (nm != null ? nm : (prompt('اسم القطعة / المالك:', s.name) || '')).trim();
   if (!nm || nm === s.name) return;
   let link = s.link;
   try { const u = new URL(s.link); u.searchParams.set('n', nm); link = u.toString(); } catch (e) {}
   updateSaved(s.id, { name: nm, link });
   renderSaved(); toast('تم تغيير الاسم إلى "' + nm + '"');
 }
+ /* ===== نافذة: هل تريد التعديل على القطعة؟ ===== */
+let pmId = null;
+function plotMenu(id) {
+  const s = loadSaved().find(x => x.id == id); if (!s) return;
+  pmId = s.id;
+  $('pmTitle').textContent = s.name;
+  $('pmInfo').textContent = 'المساحة ' + fmt(s.area) + ' م²' + (s.date ? ' · ' + s.date : '');
+  $('pmInput').value = s.name;
+  $('pmenu').classList.add('show');
+}
+const pmClose = () => { $('pmenu').classList.remove('show'); pmId = null; };
+const pmSaveName = () => {
+  const id = pmId, nm = $('pmInput').value.trim();
+  if (!nm) { $('pmInput').focus(); return; }
+  pmClose(); renameSaved(id, nm);
+};
+$('pmSave').onclick = pmSaveName;
+$('pmInput').addEventListener('keydown', e => { if (e.key === 'Enter') pmSaveName(); });
+$('pmPts').onclick = () => { const id = pmId; pmClose(); openSaved(id); };
+$('pmCancel').onclick = pmClose;
+$('pmenu').onclick = e => { if (e.target.id === 'pmenu') pmClose(); };   // الضغط خارج النافذة = إلغاء
 function endEdit() {
    editingId = null; drawing = false; $('newPlot').classList.remove('primary'); pts = []; $('name').value = ''; $('manual').value = '';
   $('saveNew').textContent = '💾 حفظ وإضافة قطعة أخرى';
