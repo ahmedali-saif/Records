@@ -532,11 +532,19 @@ function renderSaved() {
 
 /* ===== البحث في القطع المحفوظة ===== */
 const norm = s => String(s).replace(/[\u064B-\u0652\u0640]/g, '').replace(/[أإآ]/g, 'ا')
-  .replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase().trim();
+    .replace(/ة/g, 'ه').replace(/ى/g, 'ي')
+  .replace(/[٠-٩]/g, d => d.charCodeAt(0) - 1632).replace(/[۰-۹]/g, d => d.charCodeAt(0) - 1776)
+  .toLowerCase().trim();
+// الرقم يُطابَق كاملاً (1 لا تُظهر 10 أو 12)، والنص يُطابَق جزئياً، وكل الكلمات يجب أن تتحقق
+function matchQ(name, q) {
+  const t = norm(name);
+  return q.split(/\s+/).filter(Boolean).every(w =>
+    /^\d+$/.test(w) ? new RegExp('(^|\\D)' + w + '(\\D|$)').test(t) : t.includes(w));
+}
 function filterSaved() {
   const q = norm($('sSearch').value), items = [...$('savedList').children]; let shown = 0;
   items.forEach(el => {
-    const ok = !q || norm(el.querySelector('.sname').firstChild.textContent).includes(q);
+        const ok = !q || matchQ(el.querySelector('.sname').firstChild.textContent, q);
     el.style.display = ok ? '' : 'none'; if (ok) shown++;
   });
   $('sCountSaved').textContent = q ? shown + ' من ' + items.length : items.length;
