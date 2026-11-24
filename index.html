@@ -579,7 +579,7 @@ $('sSearch').addEventListener('keydown', e => {
  
 $('savedList').addEventListener('click', e => {
   const g = e.target.closest('[data-go]');
-      if (g) { e.preventDefault(); goSaved(g.dataset.go); return; }
+      if (g) { e.preventDefault(); plotMenu(g.dataset.go); return; }
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.view) { goSaved(b.dataset.view); return; }
   const list = loadSaved();
