@@ -51,6 +51,7 @@
     padding:8px 16px;border-radius:20px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
   #toast.show{opacity:1}
   .elen span.pl{background:rgba(0,0,0,.7);font-size:12px;font-weight:700;direction:rtl;cursor:move;padding:2px 8px}
+   #map.nolbl .elen span.pl{display:none}
   .sitem input[type=color]{width:30px;height:26px;border:none;padding:0;background:none;cursor:pointer}
   .saved{margin-top:10px;border-top:1px solid #e3ebe6;padding-top:8px}
   .saved h3{font-size:14px;margin:0 0 6px;color:#1b7a4b}
@@ -476,7 +477,10 @@ function storeSaved(list) { try { localStorage.setItem(STORE, JSON.stringify(lis
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const savedLayer = L.layerGroup().addTo(map);
-function plotPts(s) {
+const cvs = L.canvas({ padding: 0.5 });   // رسم القطع المحفوظة على Canvas (أسرع بكثير)
+const lblZoom = () => map.getContainer().classList.toggle('nolbl', map.getZoom() < 14);
+map.on('zoomend', lblZoom); lblZoom();
+ function plotPts(s) {
   if (s.pts) return s.pts;
   try { return parseList(new URL(s.link).searchParams.get('p') || ''); } catch (e) { return []; }
 }
@@ -499,9 +503,9 @@ function renderSaved() {
   list.forEach(s => {
     const P = plotPts(s); if (P.length < 3 || s.id == editingId) return;   // القطعة المفتوحة للتعديل تُرسم بالأصفر
     const col = s.color || PALETTE[0], c = centroid(P), lp = s.label || c;
-    L.polygon(P, { color: col, weight: 2, fillColor: col, fillOpacity: .2, interactive: false }).addTo(savedLayer);
+    L.polygon(P, { renderer: cvs, color: col, weight: 2, fillColor: col, fillOpacity: .2, interactive: false }).addTo(savedLayer);
     // خط منقط يربط الاسم بالقطعة إذا كان الاسم خارجها
-    const line = L.polyline([c, lp], { color: col, weight: 1.5, dashArray: '4 4', interactive: false });
+    const line = L.polyline([c, lp], { renderer: cvs, color: col, weight: 1.5, dashArray: '4 4', interactive: false });
     if (!inside(lp, P)) line.addTo(savedLayer);
     const lm = L.marker(lp, { draggable: true, autoPan: true,
       icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: `<span class="pl" style="border:2px solid ${col}">${esc(s.name)}</span>` }) }).addTo(savedLayer);
@@ -652,7 +656,8 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 
   // كل رابط يُنشأ أو يُنسخ يحمل المخطط كاملاً (ولا يُخزَّن المخطط داخل القائمة نفسها)
   try { shareLink = (...a) => withMap(origShare(...a)); } catch (e) {}
-  try { loadSaved = () => origLoad().map(s => ({ ...s, link: withMap(s.link) })); } catch (e) {}
+  // الرابط الكامل يُحسب عند النسخ فقط وليس عند كل قراءة للقائمة (سبب البطء)
+  try { const origCopy = copyText; copyText = t => origCopy(withMap(t)); } catch (e) {}
   try { storeSaved = l => origStore(l.map(s => ({ ...s, link: stripMap(s.link) }))); } catch (e) {}
  
   // عند فتح رابط قطعة: ارسم المخطط كاملاً وميّز القطعة المطلوبة
@@ -669,7 +674,7 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
     if (!target.length || dist(centroid(target), centroid(P)) <= NEAR_VIEW) all.push(...P);
     if (target.length && P.every(v => target.some(t => near(v, t)))) return;   // هي نفس القطعة المطلوبة
     const c = /^[0-9a-f]{6}$/i.test(col) ? '#' + col : PALETTE[0];
-    L.polygon(P, { color: c, weight: 2, fillColor: c, fillOpacity: .2, interactive: false }).addTo(savedLayer);
+        L.polygon(P, { renderer: cvs, color: c, weight: 2, fillColor: c, fillOpacity: .2, interactive: false }).addTo(savedLayer);
     L.marker(centroid(P), { interactive: false,
       icon: L.divIcon({ className: 'elen', iconSize: [0, 0], html: `<span class="pl" style="border:2px solid ${c}">${esc(name)}</span>` }) }).addTo(savedLayer);
   });
@@ -763,7 +768,8 @@ const SYNC_URL = 'https://script.google.com/macros/s/AKfycbz_oPA45PpgO6h4IsyXsf0
   storeSaved = list => {
     const before = raw(), ok = store0(list); if (!ok) return ok;
     const after = raw(), ids = new Set(after.map(s => String(s.id)));
-    const save = after.filter(s => { const o = before.find(x => String(x.id) === String(s.id)); return !o || !same(o, s); }).map(pick);
+        const bm = new Map(before.map(x => [String(x.id), x]));
+    const save = after.filter(s => { const o = bm.get(String(s.id)); return !o || !same(o, s); }).map(pick);
     const del = before.filter(s => !ids.has(String(s.id))).map(s => s.id);
     if (save.length || del.length)
       post({ save, del }).catch(() => toast('⚠️ لم تتم المزامنة — القطع محفوظة على هذا الجهاز فقط'));
