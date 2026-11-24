@@ -158,6 +158,7 @@
   <input type="text" id="pmInput" placeholder="اسم القطعة / المالك">
   <button class="btn primary" id="pmSave">💾 حفظ الاسم</button>
   <button class="btn" id="pmPts">📐 تعديل الأركان</button>
+  <button class="btn" id="pmCopy">📋 نسخ رابط القطعة</button>
   <button class="btn" id="pmCancel">إلغاء</button>
 </div></div>
 
@@ -648,6 +649,10 @@ const pmSaveName = () => {
 $('pmSave').onclick = pmSaveName;
 $('pmInput').addEventListener('keydown', e => { if (e.key === 'Enter') pmSaveName(); });
 $('pmPts').onclick = () => { const id = pmId; pmClose(); openSaved(id); };
+$('pmCopy').onclick = () => {
+  const s = loadSaved().find(x => x.id == pmId); pmClose();
+  if (s) copyText(s.link);
+};
 $('pmCancel').onclick = pmClose;
 $('pmenu').onclick = e => { if (e.target.id === 'pmenu') pmClose(); };   // الضغط خارج النافذة = إلغاء
 function endEdit() {
