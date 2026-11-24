@@ -504,7 +504,9 @@ function renderSaved() {
   list.forEach(s => {
     const P = plotPts(s); if (P.length < 3 || s.id == editingId) return;   // القطعة المفتوحة للتعديل تُرسم بالأصفر
     const col = s.color || PALETTE[0], c = centroid(P), lp = s.label || c;
-    L.polygon(P, { renderer: cvs, color: col, weight: 2, fillColor: col, fillOpacity: .2, interactive: false }).addTo(savedLayer);
+        L.polygon(P, { renderer: cvs, color: col, weight: 2, fillColor: col, fillOpacity: .2 })
+      .on('click', e => { if (drawing || editingId) return; L.DomEvent.stopPropagation(e); renameSaved(s.id); })
+      .addTo(savedLayer);
     // خط منقط يربط الاسم بالقطعة إذا كان الاسم خارجها
     const line = L.polyline([c, lp], { renderer: cvs, color: col, weight: 1.5, dashArray: '4 4', interactive: false });
     if (!inside(lp, P)) line.addTo(savedLayer);
@@ -515,8 +517,9 @@ function renderSaved() {
       if (inside([e.latlng.lat, e.latlng.lng], P)) savedLayer.removeLayer(line); else line.addTo(savedLayer);
     });
     lm.on('dragend', e => { const g = e.target.getLatLng(); updateSaved(s.id, { label: [+g.lat.toFixed(6), +g.lng.toFixed(6)] }); });
-    lm.on('dblclick', () => { updateSaved(s.id, { label: null }); renderSaved(); });   // نقر مزدوج = إرجاع الاسم للوسط
-  });
+    let ct;   // نقرة واحدة = تعديل الاسم، نقر مزدوج = إرجاع الاسم للوسط
+    lm.on('click', () => { if (drawing || editingId) return; clearTimeout(ct); ct = setTimeout(() => renameSaved(s.id), 250); });
+    lm.on('dblclick', () => { clearTimeout(ct); updateSaved(s.id, { label: null }); renderSaved(); }); });
   $('savedBox').style.display = list.length ? '' : 'none';
   $('sCountSaved').textContent = list.length;
   $('savedList').innerHTML = list.map(s => `
@@ -560,7 +563,7 @@ $('sSearch').addEventListener('keydown', e => {
  
 $('savedList').addEventListener('click', e => {
   const g = e.target.closest('[data-go]');
-    if (g) { e.preventDefault(); renameSaved(g.dataset.go); return; }
+      if (g) { e.preventDefault(); goSaved(g.dataset.go); return; }
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.view) { goSaved(b.dataset.view); return; }
   const list = loadSaved();
