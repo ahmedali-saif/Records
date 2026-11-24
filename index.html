@@ -523,6 +523,7 @@ function renderSaved() {
      <a class="sname" href="#" data-go="${s.id}">${s.id == editingId ? '✏️ ' : ''}${esc(s.name)}
         <small>${fmt(s.area)} م² · ${esc(s.date)}</small></a>
       <input type="color" data-color="${s.id}" value="${esc(s.color || PALETTE[0])}" title="لون القطعة">
+           <button data-view="${s.id}" title="الذهاب إلى القطعة">🎯</button>
       <button data-copy="${s.id}" title="نسخ الرابط">📋</button>
       <button data-del="${s.id}" title="حذف">🗑</button>
     </div>`).join('');
@@ -552,6 +553,7 @@ $('savedList').addEventListener('click', e => {
   const g = e.target.closest('[data-go]');
   if (g) { e.preventDefault(); openSaved(g.dataset.go); return; }
   const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.view) { goSaved(b.dataset.view); return; }
   const list = loadSaved();
   if (b.dataset.copy) { const s = list.find(x => x.id == b.dataset.copy); if (s) copyText(s.link); }
   if (b.dataset.del) {
@@ -574,6 +576,20 @@ function openSaved(id) {
   map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [40, 40], maxZoom: 19,
     paddingBottomRight: mob ? [40, pn.offsetHeight + 20] : [pn.offsetWidth + 50, 40] });
   toast('تعديل "' + s.name + '": اسحب النقاط ثم اضغط حفظ التعديل');
+}
+ /* ===== الذهاب إلى قطعة محفوظة للعرض فقط (بدون تعديل) ===== */
+let flashLayer = null;
+function goSaved(id) {
+  const s = loadSaved().find(x => x.id == id); if (!s) return;
+  const P = plotPts(s); if (P.length < 3) return;
+  const pn = $('panel'), mob = innerWidth <= 640;
+  map.fitBounds(L.latLngBounds(P), { paddingTopLeft: [40, 40], maxZoom: 19,
+    paddingBottomRight: mob ? [40, pn.offsetHeight + 20] : [pn.offsetWidth + 50, 40] });
+  // تمييز القطعة مؤقتاً
+  if (flashLayer) map.removeLayer(flashLayer);
+  flashLayer = L.polygon(P, { color: '#fff', weight: 5, dashArray: '8 6', fill: false, interactive: false }).addTo(map);
+  setTimeout(() => { if (flashLayer) { map.removeLayer(flashLayer); flashLayer = null; } }, 2500);
+  toast(s.name + ' · ' + fmt(s.area) + ' م²');
 }
 function endEdit() {
   editingId = null; pts = []; $('name').value = ''; $('manual').value = '';
